@@ -1,0 +1,117 @@
+{
+  "name": "denuncia-golpe",
+  "nodes": [
+    {
+      "id": "e46d9ea6-7e62-5244-897e-a92dcf69deed",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "73575442-bbff-5cf0-b07c-409fad23b8eb",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "denuncia-golpe",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "Denúncia de golpe - site"
+        }
+      }
+    },
+    {
+      "id": "cb97f6c3-cab2-5566-9a5a-b5c8193d3501",
+      "name": "Decide",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// ============================================================\n// Nó \"Decide\" do workflow de denúncia de golpe.\n//\n// Recebe a denúncia do site e decide, ANTES de qualquer chamada ao SendFlow, o que fazer.\n// O webhook já respondeu 403 se o cabeçalho X-Webhook-Token não bateu.\n//\n// Este workflow é curto de propósito (Webhook → Decide → Responde → Executa): o n8n só grava\n// a memória ($getWorkflowStaticData) quando a execução termina. Se o bloqueio, a remoção e a\n// espera de conferência rodassem aqui, cada execução levaria mais de um minuto e denúncias\n// simultâneas não se enxergariam: o disjuntor não seguraria uma rajada. O trabalho pesado\n// fica no workflow \"<nome>-execucao\", chamado sem esperar.\n//\n//   oficial    número da lista `protegidos`: nunca bloqueia\n//   repetido   já mandado bloquear nos últimos N minutos: não chama o SendFlow de novo\n//   pausado    disjuntor (muitos bloqueios na última hora), modo aprovação ou dado inválido:\n//              só manda o e-mail, alguém bloqueia à mão\n//   bloqueado  segue para bloquear e tirar dos grupos\n//\n// O build.py troca /*__CONFIG__*/ pelo conteúdo do config.json. Edite AQUI e rode o build,\n// nunca no editor do n8n (o próximo --push sobrescreve).\n// ============================================================\n\nconst CFG = {\"email_para\": \"equipe@suaempresa.com.br\", \"clientes\": {\"minha-marca\": {\"rotulo\": \"Minha Marca\", \"sigla\": \"MM\", \"releases\": [{\"id\": \"ID_DA_CAMPANHA_NO_SENDFLOW\", \"nome\": \"[MM][LANCAMENTO][NOV][26]\"}]}}, \"protegidos\": [\"551100000001\", \"5511900000002\"], \"bloqueio_automatico\": false, \"limite_por_hora\": 10, \"repetido_minutos\": 60};\n\nconst PARA = CFG.email_para;\nconst CLIENTES = CFG.clientes || {};\nconst PROTEGIDOS_RAW = CFG.protegidos || [];\n// Só `true` liga o automático: chave ausente, \"false\" em texto ou qualquer outro valor = modo aprovação.\nconst AUTOMATICO = CFG.bloqueio_automatico === true;\nconst LIMITE_POR_HORA = CFG.limite_por_hora || 10;\nconst REPETIDO_MS = (CFG.repetido_minutos || 60) * 60 * 1000;\nconst GUARDA_MS = 30 * 24 * 3600 * 1000;\n\nconst so = (s) => String(s || '').replace(/\\D/g, '');\n\n/**\n * Grafias do mesmo número no WhatsApp. Celular brasileiro existe com e sem o 9: conta antiga\n * tem o JID sem ele, então bloquear uma grafia só deixa a outra passar.\n */\nfunction variantes(dig) {\n  const d = so(dig);\n  if (!d) return [];\n  const out = new Set([d]);\n  if (d.startsWith('55')) {\n    const nac = d.slice(2);\n    if (nac.length === 11 && nac[2] === '9') out.add('55' + nac.slice(0, 2) + nac.slice(3));\n    else if (nac.length === 10 && /[6-9]/.test(nac[2])) out.add('55' + nac.slice(0, 2) + '9' + nac.slice(2));\n  }\n  return [...out];\n}\n\nconst body = $input.first().json.body || {};\nconst agora = Date.now();\nconst dry = body.dry === true;\nconst cliente = CLIENTES[body.client];\nconst sus = so(body.suspeito);\nconst vars = variantes(sus);\nconst protegidos = new Set(PROTEGIDOS_RAW.flatMap(variantes));\n\n// Memória do workflow. Só persiste em execução de produção (webhook com o workflow ativo).\n// `bloqueadoEm` marca quando o bloqueio foi MANDADO: se o SendFlow recusar, a próxima denúncia\n// depois da janela de `repetido_minutos` tenta de novo (e o e-mail já avisou da falha).\nconst st = $getWorkflowStaticData('global');\nst.denuncias = st.denuncias || {};\nst.bloqueios = (st.bloqueios || []).filter((t) => agora - t < 3600 * 1000);\nfor (const [k, v] of Object.entries(st.denuncias)) if (agora - v.ultima > GUARDA_MS) delete st.denuncias[k];\n\nconst anterior = st.denuncias[sus];\nlet status;\nlet motivo = null;\nif (!cliente) {\n  status = 'pausado';\n  motivo = `cliente desconhecido: ${body.client}`;\n} else if (sus.length < 8 || sus.length > 15) {\n  status = 'pausado';\n  motivo = 'número inválido';\n} else if (vars.some((v) => protegidos.has(v))) {\n  status = 'oficial';\n  motivo = 'número da lista de protegidos';\n} else if (anterior && anterior.bloqueadoEm && agora - anterior.bloqueadoEm < REPETIDO_MS) {\n  status = 'repetido';\n} else if (!AUTOMATICO) {\n  status = 'pausado';\n  motivo = 'modo aprovação: conferir e bloquear à mão';\n} else if (!dry && st.bloqueios.length >= LIMITE_POR_HORA) {\n  status = 'pausado';\n  motivo = `disjuntor: ${st.bloqueios.length} bloqueios na última hora`;\n} else {\n  status = 'bloqueado';\n}\n\n// Teste não mexe na memória: senão o dry-run marcaria o número como já bloqueado.\nlet vezes = (anterior ? anterior.vezes : 0) + 1;\nif (!dry && sus) {\n  const reg = st.denuncias[sus] || { vezes: 0, primeira: agora };\n  reg.vezes += 1;\n  reg.ultima = agora;\n  if (status === 'bloqueado') {\n    reg.bloqueadoEm = agora;\n    st.bloqueios.push(agora);\n  }\n  st.denuncias[sus] = reg;\n  vezes = reg.vezes;\n}\n\nconst den = body.denunciante || {};\nreturn [\n  {\n    json: {\n      status,\n      motivo,\n      dry,\n      para: PARA,\n      cliente: body.client,\n      rotulo: cliente ? cliente.rotulo : body.client,\n      sigla: cliente ? cliente.sigla : '?',\n      cor: cliente && cliente.cor ? cliente.cor : null,\n      releases: cliente ? cliente.releases || [] : [],\n      suspeito: sus ? `+${sus}` : '',\n      variantes: vars,\n      vezes,\n      denunciante: { nome: String(den.nome || ''), whatsapp: String(den.whatsapp || '') },\n      link: body.link || null,\n      relato: body.relato || null,\n      temPrint: !!(body.print && body.print.base64),\n      print: body.print && body.print.base64 ? body.print : null,\n      recebidoEm: body.receivedAt || new Date(agora).toISOString(),\n      page: body.page || null,\n      ip: body.ip || null,\n      ua: body.ua || null,\n    },\n  },\n];\n"
+      }
+    },
+    {
+      "id": "d90ed3de-4444-58b5-8066-0aafc6f56255",
+      "name": "Responde",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, status: $json.status }) }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "93f30b5f-4aad-51f1-aea6-5a78742108df",
+      "name": "Executa",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        660,
+        300
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "__ID_DO_WORKFLOW_DE_EXECUCAO__",
+          "mode": "id"
+        },
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Decide",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decide": {
+      "main": [
+        [
+          {
+            "node": "Responde",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Responde": {
+      "main": [
+        [
+          {
+            "node": "Executa",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Sao_Paulo",
+    "errorWorkflow": "__ID_DO_WORKFLOW_DE_ALERTA__"
+  }
+}

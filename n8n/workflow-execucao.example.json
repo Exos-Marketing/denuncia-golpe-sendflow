@@ -1,0 +1,416 @@
+{
+  "name": "denuncia-golpe-execucao",
+  "nodes": [
+    {
+      "id": "8df0e60f-ee28-5e7f-a3d9-96a4ed3c924b",
+      "name": "Recebe",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "inputSource": "passthrough"
+      }
+    },
+    {
+      "id": "4c1d819b-7c1a-56fd-9d8a-d051f717ac57",
+      "name": "Bloquear agora?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.status === 'bloqueado' && !$json.dry }}",
+              "value2": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "58a66c09-00a6-5170-bc2c-ff639463ceaf",
+      "name": "Itens de bloqueio",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        160
+      ],
+      "parameters": {
+        "jsCode": "// Uma chamada por grafia do número (com e sem o 9).\nconst d = $input.first().json;\nconst quando = new Date().toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' });\nreturn d.variantes.map((v) => ({ json: { number: v, name: `Golpe denunciado ${d.sigla} ${quando}` } }));\n"
+      }
+    },
+    {
+      "id": "3e2a5716-e685-5dfe-b95f-d886739375b1",
+      "name": "Bloqueia",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        160
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://sendflow.pro/sendapi/block-numbers",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"
+            }
+          ]
+        },
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1200
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 20000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ number: $json.number, name: $json.name }) }}"
+      },
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "SendFlow - denúncia de golpe"
+        }
+      }
+    },
+    {
+      "id": "e818f9ce-65f2-5595-a0fb-3b6e4efc9151",
+      "name": "Itens de remoção",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        160
+      ],
+      "parameters": {
+        "jsCode": "// ============================================================\n// Nó \"Itens de remoção\" do workflow de denúncia de golpe.\n//\n// Recebe as respostas do bloqueio (uma por grafia do número) e monta um item por campanha\n// da marca para o POST /actions/remove-participants.\n//\n// Para tudo no primeiro 401, 403, 429, 5xx ou erro de rede. No SendFlow, 403 é \"Limite de operações\n// atingido!\" e violações repetidas em poucos minutos bloqueiam a CHAVE inteira por horas.\n// Insistir é o que transforma um limite leve em chave bloqueada. Nesse caso o e-mail avisa e\n// a equipe termina à mão.\n// ============================================================\n\nconst d = $('Recebe').first().json;\nconst bloqueios = $input.all().map((i) => i.json);\n\nconst falha = bloqueios.find((b) => b.error || [401, 403, 429].includes(b.statusCode) || b.statusCode >= 500);\nif (falha) {\n  const motivo = falha.error\n    ? `erro de rede no bloqueio: ${String(falha.error.message || falha.error).slice(0, 200)}`\n    : `bloqueio respondeu ${falha.statusCode}: ${JSON.stringify(falha.body).slice(0, 200)}`;\n  return [{ json: { pular: true, motivo } }];\n}\nif (!d.releases.length) return [{ json: { pular: true, motivo: 'nenhuma campanha configurada para a marca' } }];\n\nreturn d.releases.map((r) => ({\n  json: { pular: false, releaseId: r.id, nome: r.nome, participants: d.variantes },\n}));\n"
+      }
+    },
+    {
+      "id": "b2dd66f5-d03f-5c3a-82b5-640c5247a2c5",
+      "name": "Pular remoção?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        160
+      ],
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.pular === true }}",
+              "value2": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "e5422c47-8b3c-5412-8f5e-2f924e796d2b",
+      "name": "Remove",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        40
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://sendflow.pro/sendapi/actions/remove-participants",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"
+            }
+          ]
+        },
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1200
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 20000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ releaseId: $json.releaseId, accountsFrom: 'release', to: { type: 'release', ids: [$json.releaseId] }, data: { participants: $json.participants } }) }}"
+      },
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "SendFlow - denúncia de golpe"
+        }
+      }
+    },
+    {
+      "id": "345af64b-9073-5145-b740-cf0f38000448",
+      "name": "Espera",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1540,
+        40
+      ],
+      "webhookId": "01928cb5-872e-5488-85da-5e163b49204d",
+      "parameters": {
+        "amount": 60,
+        "unit": "seconds"
+      }
+    },
+    {
+      "id": "7818ced3-3467-5215-9303-503ada511aea",
+      "name": "Confere",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1760,
+        40
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://sendflow.pro/sendapi/actions/{{ ($json.body && ($json.body.actionId || $json.body.id)) || 'sem-id' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"
+            }
+          ]
+        },
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1200
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 20000
+        }
+      },
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "SendFlow - denúncia de golpe"
+        }
+      }
+    },
+    {
+      "id": "81094ccb-9a3d-57c3-a54e-fa5025072a5e",
+      "name": "Monta e-mail",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// ============================================================\n// Nó \"Monta e-mail\" do workflow de denúncia de golpe.\n//\n// E-mail de conferência para a equipe, em TODA denúncia (inclusive oficial, repetida, teste,\n// disjuntor e modo aprovação). Quando o bloqueio é automático, este e-mail é como a equipe\n// confere depois e desfaz se for engano: links wa.me para falar com quem denunciou e para ver\n// o perfil do número, o que a pessoa mandou, o print anexo e o resultado de cada chamada ao\n// SendFlow.\n//\n// Chega aqui por três caminhos (sem SendFlow, remoção pulada, remoção conferida), então lê\n// cada nó com try/catch: nó que não rodou nesta execução lança erro ao ser lido.\n// ============================================================\n\nconst d = $('Recebe').first().json;\nconst COR = d.cor || '#e10098'; // clientes.<slug>.cor no config.json\nconst ler = (nome) => {\n  try {\n    return $(nome).all().map((i) => i.json);\n  } catch (e) {\n    return null;\n  }\n};\nconst bloqueios = ler('Bloqueia');\nconst itens = ler('Itens de remoção');\nconst remocoes = ler('Remove');\nconst conferencias = ler('Confere');\n\nconst esc = (s) =>\n  String(s == null ? '' : s)\n    .replace(/&/g, '&amp;')\n    .replace(/</g, '&lt;')\n    .replace(/>/g, '&gt;')\n    .replace(/\"/g, '&quot;');\nconst so = (s) => String(s || '').replace(/\\D/g, '');\nfunction fmt(e164) {\n  const x = so(e164);\n  const m = /^55(\\d{2})(\\d{4,5})(\\d{4})$/.exec(x);\n  return m ? `+55 ${m[1]} ${m[2]}-${m[3]}` : `+${x}`;\n}\nconst ok = (code) => code >= 200 && code < 300;\nconst trecho = (v) => esc(JSON.stringify(v == null ? '' : v).slice(0, 220));\n\n// ---------- resultado do SendFlow ----------\nconst linhas = [];\nlet falhou = false;\nif (bloqueios) {\n  for (const b of bloqueios) {\n    const numero = (b.body && b.body.number) || '?';\n    if (b.error) {\n      falhou = true;\n      linhas.push(`❌ Bloqueio: erro de rede (${esc(String(b.error.message || b.error).slice(0, 160))})`);\n    } else if (ok(b.statusCode)) {\n      linhas.push(`✅ Bloqueado: ${esc(numero)}`);\n    } else {\n      falhou = true;\n      linhas.push(`❌ Bloqueio respondeu ${b.statusCode}: ${trecho(b.body)}`);\n    }\n  }\n}\nif (itens && itens.length && itens[0].pular) {\n  falhou = true;\n  linhas.push(`⚠️ Remoção dos grupos NÃO foi feita: ${esc(itens[0].motivo)}`);\n} else if (itens && remocoes) {\n  itens.forEach((it, i) => {\n    const r = remocoes[i] || {};\n    const c = (conferencias && conferencias[i]) || null;\n    let txt = `${esc(it.nome)}: `;\n    if (r.error || !ok(r.statusCode)) {\n      falhou = true;\n      txt += `❌ ação recusada (${r.error ? 'erro de rede' : r.statusCode}) ${trecho(r.body)}`;\n    } else if (!c || c.error || !ok(c.statusCode)) {\n      txt += `🟡 ação criada, sem conferência (${c ? c.statusCode || 'erro' : 'não conferida'})`;\n    } else {\n      const a = c.body || {};\n      if (a.success === true) txt += '✅ removido (ou não estava lá)';\n      else if (a.processed === true) {\n        falhou = true;\n        txt += `❌ processada sem sucesso ${trecho(a.result || a.error || '')}`;\n      } else txt += '🟡 ainda processando';\n    }\n    linhas.push(txt);\n  });\n}\n\n// ---------- assunto ----------\nconst sus = fmt(d.suspeito);\nlet estado;\nif (d.status === 'oficial') estado = 'oficial, NÃO bloqueado';\nelse if (d.status === 'repetido') estado = `repetido (${d.vezes}ª denúncia), já estava bloqueado`;\nelse if (d.status === 'pausado') estado = `NÃO bloqueado, conferir à mão (${d.motivo || 'pausado'})`;\nelse if (d.dry) estado = 'teste, nada feito no SendFlow';\nelse estado = falhou ? 'bloqueado com FALHA, conferir' : 'bloqueado e removido dos grupos';\nconst subject = `${d.dry ? '[TESTE] ' : ''}[Golpe][${d.sigla}] ${sus}: ${estado}`;\n\n// ---------- links ----------\nconst den = d.denunciante || {};\nconst primeiro = String(den.nome || '').trim().split(/\\s+/)[0] || '';\nconst msgDen =\n  `Oi, ${primeiro}! Aqui é da equipe de ${d.rotulo}. Recebemos sua denúncia do número ${sus}, ` +\n  'obrigado por avisar. Você chegou a pagar ou enviar algum dado para essa pessoa?';\nconst waDen = so(den.whatsapp) ? `https://wa.me/${so(den.whatsapp)}?text=${encodeURIComponent(msgDen)}` : null;\nconst waSus = so(d.suspeito) ? `https://wa.me/${so(d.suspeito)}` : null;\nconst botao = (href, txt, cor) =>\n  `<a href=\"${esc(href)}\" style=\"display:inline-block;margin:4px 8px 4px 0;padding:10px 16px;border-radius:10px;background:${cor};color:#fff;font-weight:bold;text-decoration:none;font-family:Helvetica,Arial,sans-serif;font-size:14px;\">${txt}</a>`;\n\nconst P = 'margin:0 0 12px;font-family:Helvetica,Arial,sans-serif;font-size:14px;line-height:1.6;color:#2b2326;';\nconst H = 'margin:22px 0 8px;font-family:Helvetica,Arial,sans-serif;font-size:15px;color:#1b0b17;';\nconst linha = (k, v) => `<tr><td style=\"padding:3px 12px 3px 0;color:#7a6a75;white-space:nowrap;vertical-align:top;\">${k}</td><td style=\"padding:3px 0;color:#1b0b17;\">${v}</td></tr>`;\n\nconst html = `<div style=\"background:#f4f2f2;padding:24px 12px;\">\n<div style=\"max-width:620px;margin:0 auto;background:#fff;border-radius:14px;padding:26px 26px 18px;border-top:4px solid ${COR};\">\n${d.dry ? `<p style=\"${P}background:#fff6d6;padding:8px 12px;border-radius:8px;\"><b>TESTE:</b> nada foi feito no SendFlow.</p>` : ''}\n<p style=\"${P}font-size:16px;\"><b>${esc(sus)}</b> foi denunciado na página de denúncia de ${esc(d.rotulo)}.</p>\n<p style=\"${P}\"><b>Status:</b> ${esc(estado)}</p>\n\n<h3 style=\"${H}\">Conferir</h3>\n<p style=\"${P}\">\n${waSus ? botao(waSus, 'Ver o número denunciado', COR) : ''}\n${waDen ? botao(waDen, `Falar com ${esc(primeiro || 'quem denunciou')}`, '#1f8f4e') : ''}\n</p>\n<p style=\"${P}color:#7a6a75;font-size:12px;\">Abrir a conversa com o número denunciado não manda nada: só mostra nome e foto do perfil.</p>\n\n<h3 style=\"${H}\">O que a pessoa mandou</h3>\n<table style=\"border-collapse:collapse;font-family:Helvetica,Arial,sans-serif;font-size:14px;\">\n${linha('Denunciado', esc(sus))}\n${linha('Grafias', esc((d.variantes || []).join(', ')))}\n${linha('Quem denunciou', `${esc(den.nome)} · ${esc(fmt(den.whatsapp))}`)}\n${linha('Link recebido', d.link ? esc(d.link) + ' <span style=\"color:#b00020;\">(não abrir)</span>' : 'não informado')}\n${linha('Relato', d.relato ? esc(d.relato) : 'não informado')}\n${linha('Print', d.temPrint ? 'anexo neste e-mail' : 'não enviado')}\n${linha('Denúncias deste número', String(d.vezes))}\n${linha('Recebido em', esc(new Date(d.recebidoEm).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })))}\n</table>\n\n${linhas.length ? `<h3 style=\"${H}\">SendFlow</h3><p style=\"${P}\">${linhas.join('<br>')}</p>` : ''}\n\n<h3 style=\"${H}\">Se foi engano</h3>\n<p style=\"${P}\">1. Painel do SendFlow, anti-spam (números bloqueados): remover ${esc((d.variantes || []).join(' e '))}. A API não desbloqueia.<br>\n2. Se for alguém de verdade da comunidade, mande de novo o link do grupo.</p>\n<p style=\"${P}color:#7a6a75;font-size:12px;\">O bloqueio vale para a conta inteira do SendFlow (todos os projetos). Número oficial nunca é bloqueado: a lista fica em protegidos, no config.json do workflow. Depois de um bloqueio, novas denúncias do mesmo número ficam como repetidas pela janela de repetido_minutos.<br>IP ${esc(d.ip)} · ${esc(d.page)}</p>\n</div></div>`;\n\nconst out = { json: { to: d.para, subject, html } };\nconst print = d.print;\nif (print && print.base64) {\n  const ext = String(print.mime || 'image/jpeg').split('/')[1] || 'jpg';\n  out.binary = {\n    print: await this.helpers.prepareBinaryData(\n      Buffer.from(print.base64, 'base64'),\n      `print-denuncia.${ext === 'jpeg' ? 'jpg' : ext}`,\n      print.mime || 'image/jpeg',\n    ),\n  };\n}\nreturn [out];\n"
+      }
+    },
+    {
+      "id": "10d322a4-f75c-5e53-9dd8-086f948ff1c5",
+      "name": "Envia e-mail",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        2200,
+        300
+      ],
+      "parameters": {
+        "fromEmail": "Denúncias <noreply@suaempresa.com.br>",
+        "toEmail": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "html": "={{ $json.html }}",
+        "options": {
+          "attachments": "print",
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "smtp": {
+          "id": "",
+          "name": "SMTP"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Recebe": {
+      "main": [
+        [
+          {
+            "node": "Bloquear agora?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bloquear agora?": {
+      "main": [
+        [
+          {
+            "node": "Itens de bloqueio",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Monta e-mail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Itens de bloqueio": {
+      "main": [
+        [
+          {
+            "node": "Bloqueia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bloqueia": {
+      "main": [
+        [
+          {
+            "node": "Itens de remoção",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Itens de remoção": {
+      "main": [
+        [
+          {
+            "node": "Pular remoção?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pular remoção?": {
+      "main": [
+        [
+          {
+            "node": "Monta e-mail",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Remove",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remove": {
+      "main": [
+        [
+          {
+            "node": "Espera",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Espera": {
+      "main": [
+        [
+          {
+            "node": "Confere",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confere": {
+      "main": [
+        [
+          {
+            "node": "Monta e-mail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Monta e-mail": {
+      "main": [
+        [
+          {
+            "node": "Envia e-mail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Sao_Paulo",
+    "errorWorkflow": "__ID_DO_WORKFLOW_DE_ALERTA__"
+  }
+}

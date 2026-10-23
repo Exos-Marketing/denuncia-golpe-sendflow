@@ -1,0 +1,59 @@
+{
+  "name": "denuncia-golpe-alerta",
+  "nodes": [
+    {
+      "id": "119c422c-7cc4-5915-93b9-dd272a1c7214",
+      "name": "Erro",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "06eb666e-996e-5970-8453-3cb5c91ed02b",
+      "name": "Avisa",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "fromEmail": "Denúncias <noreply@suaempresa.com.br>",
+        "toEmail": "equipe@suaempresa.com.br",
+        "subject": "=[Golpe] FALHA no workflow {{ $json.workflow.name }}",
+        "emailFormat": "text",
+        "text": "=O workflow {{ $json.workflow.name }} falhou{{ $json.execution.lastNodeExecuted ? ' no nó ' + $json.execution.lastNodeExecuted : '' }}.\n\nErro: {{ $json.execution.error ? $json.execution.error.message : 'sem mensagem' }}\nExecução: {{ $json.execution.url }}\n\nSe foi no workflow de execução, quem denunciou viu a confirmação na página, mas o número pode não ter sido bloqueado e o e-mail de conferência não saiu. Abra a execução, pegue o número no nó Recebe e bloqueie à mão no painel do SendFlow.\n",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "smtp": {
+          "id": "",
+          "name": "SMTP"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Erro": {
+      "main": [
+        [
+          {
+            "node": "Avisa",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Sao_Paulo"
+  }
+}

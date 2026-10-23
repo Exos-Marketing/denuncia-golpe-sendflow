@@ -1,0 +1,15 @@
+# configuração com dados reais e segredos: nunca no git
+n8n/config.json
+n8n/workflow.json
+n8n/workflow-execucao.json
+n8n/.segredos/
+n8n/.backup/
+n8n/workflow-alerta.json
+.env
+.env.*
+
+node_modules/
+.next/
+__pycache__/
+*.pyc
+.DS_Store

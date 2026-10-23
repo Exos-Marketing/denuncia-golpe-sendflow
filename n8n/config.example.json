@@ -1,0 +1,33 @@
+{
+  "_leia": "Copie para n8n/config.json (fora do git) e preencha. Nada aqui é segredo, mas os números da sua equipe são dado pessoal: não publique o config.json.",
+  "workflow_name": "denuncia-golpe",
+  "webhook_path": "denuncia-golpe",
+  "email_para": "equipe@suaempresa.com.br",
+  "email_de": "Denúncias <noreply@suaempresa.com.br>",
+  "bloqueio_automatico": false,
+  "limite_por_hora": 10,
+  "repetido_minutos": 60,
+  "espera_conferencia_s": 60,
+  "timezone": "America/Sao_Paulo",
+  "error_workflow": null,
+  "sendflow_base": "https://sendflow.pro/sendapi",
+  "credenciais": {
+    "webhook": { "id": "", "name": "Denúncia de golpe - site" },
+    "sendflow": { "id": "", "name": "SendFlow - denúncia de golpe" },
+    "smtp": { "id": "", "name": "SMTP" }
+  },
+  "clientes": {
+    "minha-marca": {
+      "rotulo": "Minha Marca",
+      "sigla": "MM",
+      "releases": [
+        { "id": "ID_DA_CAMPANHA_NO_SENDFLOW", "nome": "[MM][LANCAMENTO][NOV][26]" }
+      ]
+    }
+  },
+  "protegidos": [
+    "+55 11 0000-0001",
+    "+55 11 90000-0002"
+  ],
+  "protegidos_arquivos": []
+}
